@@ -237,6 +237,10 @@ The ingress routing splits the **`/admin` page** (web) from the **`/admin/*` API
 required — browsers block mic access outside a secure context, and an HTTPS page
 can't open an insecure `ws://`.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Production
 
 See [docs/DESIGN.md](docs/DESIGN.md) and [deploy/helm](deploy/helm) for the
