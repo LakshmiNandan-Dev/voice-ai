@@ -2,13 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Agent,
   adminApi,
+  CallDetail,
+  CallRow,
   ConfigResponse,
   EmailSettings,
   Invitation,
   LogRec,
-  Recording,
-  SessionRow,
-  Turn,
   Unauthorized,
 } from "./adminApi";
 
@@ -864,7 +863,7 @@ function ConfigPanel({ token, onAuthFail }: PanelProps) {
   const onProvider = (pid: string) => {
     const p = cfg?.providers.find((x) => x.id === pid);
     setForm((f) => {
-      const next = { ...f, llm_provider: pid, llm_base_url: "" };
+      const next: Record<string, string> = { ...f, llm_provider: pid, llm_base_url: "" };
       if (p && p.models.length && !p.models.includes(f.llm_model)) {
         next.llm_model = p.models[0];
       }
