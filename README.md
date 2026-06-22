@@ -61,18 +61,6 @@ Ports: web `:3000` · agent `:7860` · tts `:5001` · postgres `:5432` · redis 
 > First run is slow: the agent image pulls PyTorch, and Whisper/Silero models
 > download on the first call (cached in the `models` volume afterward).
 
-## ⚠️ macOS latency note (read this)
-
-Docker Desktop on Apple Silicon **cannot** pass the Metal GPU into Linux
-containers, so Whisper runs on **CPU** here. Expect end-to-end response latency
-of roughly **1.2–2.5s** locally — fully functional, just not snappy. On a
-production GPU node (`WHISPER_DEVICE=cuda`) the same images hit **~0.7–0.9s**.
-
-To tune local latency: set `WHISPER_MODEL=tiny.en` and/or `LLM_MODEL=claude-haiku-4-5`
-in `.env`. For genuinely fast local dev, run the agent natively on macOS with
-Pipecat's MLX Whisper backend (uses Metal) instead of in Docker — see
-[docs/DESIGN.md](docs/DESIGN.md).
-
 ## What's where
 
 | Path | What |
