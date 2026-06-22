@@ -1,0 +1,79 @@
+{{- if .Values.postgres.deploy -}}
+{{- $fullname := include "voice-ai.fullname" . -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "voice-ai.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "{{ .Values.postgres.user }}"] }
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+{{- end }}

@@ -1,0 +1,72 @@
+{{- if .Values.ingress.enabled -}}
+{{- $fullname := include "voice-ai.fullname" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- if .Values.ingress.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # Agent endpoints (the browser talks to /start then upgrades /ws-client).
+          - path: /start
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-agent
+                port: { number: {{ .Values.agent.port }} }
+          - path: /ws-client
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-agent
+                port: { number: {{ .Values.agent.port }} }
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-agent
+                port: { number: {{ .Values.agent.port }} }
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-agent
+                port: { number: {{ .Values.agent.port }} }
+          # The admin *API* (/admin/*) is the agent; the bare /admin *page* is the
+          # React app. Exact > Prefix, so /admin loads the SPA and /admin/* hits the API.
+          - path: /admin
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $fullname }}-web
+                port: { number: {{ .Values.web.port }} }
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-agent
+                port: { number: {{ .Values.agent.port }} }
+          # Everything else -> the React app.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-web
+                port: { number: {{ .Values.web.port }} }
+{{- end }}

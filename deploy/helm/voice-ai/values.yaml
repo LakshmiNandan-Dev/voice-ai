@@ -1,0 +1,166 @@
+# Default values. Override per environment with `-f values-<env>.yaml`.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: "" # e.g. ghcr.io/yourorg ; empty = local images (kind/minikube)
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"
+
+# ---------------------------------------------------------------------------
+# Agent (Pipecat orchestrator). The stateful, per-call service.
+# ---------------------------------------------------------------------------
+agent:
+  image: voice-ai-agent
+  replicas: 2
+  port: 7860
+  # LLM brain: "anthropic" (Claude API) or "ollama" (self-hosted OpenAI-compatible).
+  llmProvider: anthropic
+  llmModel: claude-opus-4-8
+  # Ollama / OpenAI-compatible endpoint (used when llmProvider=ollama). Point at
+  # your in-cluster or external model server, e.g. http://ollama:11434.
+  ollamaBaseUrl: "http://host.docker.internal:11434"
+  # Record call audio (merged user+agent WAV) to /data/recordings. NOTE: the
+  # chart mounts an emptyDir (per-pod, ephemeral). For durable, multi-replica
+  # storage use a RWX PVC or an object-store-backed mount (S3/GCS).
+  recordAudio: true
+  whisper:
+    model: small
+    # CPU works everywhere; set device=cuda + gpu.enabled below for the latency target.
+    device: cpu
+    computeType: int8
+  # GPU node pool. When enabled, Whisper runs on CUDA and pods schedule on GPU nodes.
+  gpu:
+    enabled: false
+    resourceName: nvidia.com/gpu
+    count: 1
+    nodeSelector: {}     # e.g. { cloud.google.com/gke-accelerator: nvidia-tesla-t4 }
+    tolerations: []
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  # A call is a long-lived WebSocket, so CPU alone scales poorly. Target a low
+  # CPU utilization so we add pods before existing calls degrade; for true
+  # call-aware scaling, wire an "active_sessions" custom metric (see comments
+  # in templates/agent-hpa.yaml).
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 50
+  # Graceful drain: finish in-flight calls instead of cutting people off.
+  terminationGracePeriodSeconds: 600
+  preStopSleepSeconds: 5
+
+# ---------------------------------------------------------------------------
+# TTS (Piper HTTP server). Stateless, scale on request rate. CPU-only.
+# ---------------------------------------------------------------------------
+tts:
+  image: voice-ai-tts
+  replicas: 2
+  port: 5000
+  voice: en_US-ryan-high
+  resources:
+    requests: { cpu: "250m", memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 65
+
+# ---------------------------------------------------------------------------
+# Web (React static via nginx).
+# ---------------------------------------------------------------------------
+web:
+  image: voice-ai-web
+  replicas: 2
+  port: 80
+  resources:
+    requests: { cpu: "50m", memory: 64Mi }
+    limits: { cpu: "250m", memory: 128Mi }
+
+# ---------------------------------------------------------------------------
+# Verification gate (one-time code before a call can start).
+# With no smtp.host / twilio.* set, the agent logs codes ("dev mode").
+# Secrets (smtp.password, twilio.authToken) go in the Secret below; everything
+# else in the ConfigMap.
+# ---------------------------------------------------------------------------
+verification:
+  appName: "Voice AI"
+  otpLength: 6
+  otpTtlSeconds: 600
+  otpMaxAttempts: 5
+  ticketTtlSeconds: 600
+  # Demo orders for the "order id" channel: id:email[:phone], comma-separated.
+  ordersSeed: "ORD-1001:customer@example.com:+15555550123,ORD-1002:buyer@example.com"
+  smtp:
+    host: ""        # empty -> email codes are logged, not sent
+    port: 587
+    user: ""
+    from: "no-reply@voice.local"
+    useTls: true
+    password: ""    # -> Secret
+  twilio:
+    accountSid: ""  # empty -> SMS codes are logged, not sent
+    fromNumber: ""
+    authToken: ""   # -> Secret
+
+# ---------------------------------------------------------------------------
+# Secrets / config
+# ---------------------------------------------------------------------------
+secrets:
+  # Provide the key here for demos, or set create=false and reference an
+  # externally-managed Secret (e.g. external-secrets) via existingSecret.
+  create: true
+  existingSecret: ""
+  anthropicApiKey: "" # for llmProvider=anthropic (set via --set-string secrets.anthropicApiKey=...)
+  openaiApiKey: ""    # for llmProvider=openai
+  geminiApiKey: ""    # for llmProvider=gemini
+  # Admin console token. Empty -> agent falls back to a dev default + warning.
+  adminToken: ""
+
+# ---------------------------------------------------------------------------
+# Stateful dependencies. Toggle in-cluster (demos) vs managed (real envs).
+# ---------------------------------------------------------------------------
+redis:
+  deploy: true                 # false -> use external url below
+  url: ""                      # e.g. redis://my-elasticache:6379/0
+  image: redis:7-alpine
+
+postgres:
+  deploy: true                 # false -> use external url below
+  url: ""                      # e.g. postgresql://user:pass@my-rds:5432/voice
+  image: postgres:16-alpine
+  user: voice
+  password: voice
+  database: voice
+  storage: 5Gi
+
+# ---------------------------------------------------------------------------
+# Ingress. WebSocket-aware + session affinity so a call pins to one agent pod.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  host: voice.local
+  tls:
+    enabled: false
+    secretName: voice-ai-tls
+    # Set to a cert-manager ClusterIssuer (e.g. "letsencrypt-prod") to
+    # auto-provision the cert into secretName. Leave empty to supply your own
+    # TLS Secret named secretName.
+    clusterIssuer: ""
+  annotations:
+    # Long-lived WebSocket connections.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Pin a call's WebSocket to one agent pod for its duration.
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+    nginx.ingress.kubernetes.io/session-cookie-name: "voiceaffinity"

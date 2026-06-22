@@ -1,0 +1,90 @@
+# Local development stack. One `docker compose up` brings up the whole voice loop.
+# Service topology here is identical to the production Kubernetes layout in
+# deploy/helm — only the wiring differs.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379" # host 6380 -> container 6379 (avoids clash with a local redis)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: voice
+      POSTGRES_PASSWORD: voice
+      POSTGRES_DB: voice
+    ports:
+      - "5433:5432" # host 5433 -> container 5432 (avoids clash with a local postgres)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  tts:
+    build:
+      context: ./services/tts
+    ports:
+      - "5001:5000" # host 5001 -> container 5000 (avoids common local clashes)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/voices"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  agent:
+    build:
+      context: ./services/agent
+    env_file:
+      - .env
+    environment:
+      TTS_BASE_URL: http://tts:5000
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://voice:voice@postgres:5432/voice
+      WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-4-8}
+      # Host's Ollama (e.g. Mistral) reachable from the container via host-gateway.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      TTS_VOICE: ${TTS_VOICE:-en_US-ryan-high}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+    ports:
+      - "7860:7860"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - models:/models # cache Whisper + Silero weights across restarts
+      - recordings:/data/recordings # call audio (WAV) persisted server-side
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      tts:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_AGENT_URL: http://localhost:7860
+    ports:
+      - "3000:80"
+    depends_on:
+      - agent
+
+volumes:
+  pgdata:
+  models:
+  recordings:

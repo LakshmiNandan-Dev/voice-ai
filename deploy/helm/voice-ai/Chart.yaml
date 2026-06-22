@@ -1,0 +1,6 @@
+apiVersion: v2
+name: voice-ai
+description: Real-time voice-to-voice conversational agent (Pipecat + self-hosted Whisper/Piper + Claude)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

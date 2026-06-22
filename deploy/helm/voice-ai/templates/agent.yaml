@@ -1,0 +1,157 @@
+{{- $fullname := include "voice-ai.fullname" . -}}
+{{- $secretName := .Values.secrets.existingSecret | default (printf "%s-secret" $fullname) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-agent
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  {{- if not .Values.agent.autoscaling.enabled }}
+  replicas: {{ .Values.agent.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: agent
+  template:
+    metadata:
+      labels:
+        {{- include "voice-ai.labels" . | nindent 8 }}
+        app.kubernetes.io/component: agent
+    spec:
+      # Finish in-flight calls on scale-down before the pod is killed.
+      terminationGracePeriodSeconds: {{ .Values.agent.terminationGracePeriodSeconds }}
+      {{- if .Values.agent.gpu.enabled }}
+      {{- with .Values.agent.gpu.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.gpu.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: {{ include "voice-ai.image" (dict "root" . "repo" .Values.agent.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.agent.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ $fullname }}-config
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: ANTHROPIC_API_KEY
+            # Verification-gate secrets; optional so dev-mode (no provider) starts fine.
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: SMTP_PASSWORD
+                  optional: true
+            - name: TWILIO_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: TWILIO_AUTH_TOKEN
+                  optional: true
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: ADMIN_TOKEN
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: GEMINI_API_KEY
+                  optional: true
+          # Readiness gates traffic until the FastAPI app is serving; the long
+          # startup window covers model loading on first boot.
+          startupProbe:
+            httpGet: { path: /health, port: {{ .Values.agent.port }} }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: {{ .Values.agent.port }} }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: {{ .Values.agent.port }} }
+            periodSeconds: 15
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep {{ .Values.agent.preStopSleepSeconds }}"]
+          resources:
+            {{- $res := deepCopy .Values.agent.resources }}
+            {{- if .Values.agent.gpu.enabled }}
+            {{- $_ := set $res.limits .Values.agent.gpu.resourceName .Values.agent.gpu.count }}
+            {{- end }}
+            {{- toYaml $res | nindent 12 }}
+          volumeMounts:
+            - name: recordings
+              mountPath: /data/recordings
+      volumes:
+        # Ephemeral per-pod store for call audio. For durable, multi-replica
+        # retention, swap for a RWX PVC or an object-store-backed mount.
+        - name: recordings
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-agent
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: agent
+  ports:
+    - port: {{ .Values.agent.port }}
+      targetPort: {{ .Values.agent.port }}
+{{- if .Values.agent.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $fullname }}-agent
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $fullname }}-agent
+  minReplicas: {{ .Values.agent.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.agent.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.agent.autoscaling.targetCPUUtilizationPercentage }}
+    # For call-aware scaling, expose an `active_sessions` gauge (from Redis) via
+    # prometheus-adapter / KEDA and add a Pods metric here, e.g.:
+    # - type: Pods
+    #   pods:
+    #     metric: { name: active_sessions }
+    #     target: { type: AverageValue, averageValue: "20" }
+{{- end }}

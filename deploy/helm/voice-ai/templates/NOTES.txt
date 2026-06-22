@@ -1,0 +1,20 @@
+voice-ai {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}".
+
+Components:
+  - agent  ({{ .Values.agent.image }})  replicas/HPA: {{ if .Values.agent.autoscaling.enabled }}{{ .Values.agent.autoscaling.minReplicas }}-{{ .Values.agent.autoscaling.maxReplicas }}{{ else }}{{ .Values.agent.replicas }}{{ end }}  GPU: {{ .Values.agent.gpu.enabled }}
+  - tts    ({{ .Values.tts.image }})
+  - web    ({{ .Values.web.image }})
+  - redis (in-cluster): {{ .Values.redis.deploy }}    postgres (in-cluster): {{ .Values.postgres.deploy }}
+
+{{- if .Values.ingress.enabled }}
+
+Reach it at: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/
+
+IMPORTANT: the web image must be built with VITE_AGENT_URL set to the SAME
+origin (http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}), since the browser calls /start
+and /ws-client on that host (the ingress routes those paths to the agent).
+{{- end }}
+
+Checks:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl logs -l app.kubernetes.io/component=agent --tail=50   # per-turn latency logs

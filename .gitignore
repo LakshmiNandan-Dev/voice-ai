@@ -1,0 +1,29 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# node
+node_modules/
+dist/
+*.log
+
+# models / data
+models/
+voices/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# claude local settings
+.claude/settings.local.json

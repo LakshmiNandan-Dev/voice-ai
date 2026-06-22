@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "voice-ai.fullname" . }}-config
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+data:
+  LLM_PROVIDER: {{ .Values.agent.llmProvider | quote }}
+  LLM_MODEL: {{ .Values.agent.llmModel | quote }}
+  OLLAMA_BASE_URL: {{ .Values.agent.ollamaBaseUrl | quote }}
+  WHISPER_MODEL: {{ .Values.agent.whisper.model | quote }}
+  WHISPER_DEVICE: {{ .Values.agent.whisper.device | quote }}
+  WHISPER_COMPUTE_TYPE: {{ .Values.agent.whisper.computeType | quote }}
+  TTS_VOICE: {{ .Values.tts.voice | quote }}
+  TTS_BASE_URL: "http://{{ include "voice-ai.fullname" . }}-tts:{{ .Values.tts.port }}"
+  RECORD_AUDIO: {{ .Values.agent.recordAudio | quote }}
+  RECORDINGS_DIR: "/data/recordings"
+  REDIS_URL: {{ include "voice-ai.redisUrl" . | quote }}
+  DATABASE_URL: {{ include "voice-ai.databaseUrl" . | quote }}
+  # Verification gate (non-secret). smtp.password / twilio.authToken are in the Secret.
+  APP_NAME: {{ .Values.verification.appName | quote }}
+  OTP_LENGTH: {{ .Values.verification.otpLength | quote }}
+  OTP_TTL_SECONDS: {{ .Values.verification.otpTtlSeconds | quote }}
+  OTP_MAX_ATTEMPTS: {{ .Values.verification.otpMaxAttempts | quote }}
+  TICKET_TTL_SECONDS: {{ .Values.verification.ticketTtlSeconds | quote }}
+  ORDERS_SEED: {{ .Values.verification.ordersSeed | quote }}
+  SMTP_HOST: {{ .Values.verification.smtp.host | quote }}
+  SMTP_PORT: {{ .Values.verification.smtp.port | quote }}
+  SMTP_USER: {{ .Values.verification.smtp.user | quote }}
+  SMTP_FROM: {{ .Values.verification.smtp.from | quote }}
+  SMTP_USE_TLS: {{ .Values.verification.smtp.useTls | quote }}
+  TWILIO_ACCOUNT_SID: {{ .Values.verification.twilio.accountSid | quote }}
+  TWILIO_FROM_NUMBER: {{ .Values.verification.twilio.fromNumber | quote }}
+{{- if .Values.secrets.create }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "voice-ai.fullname" . }}-secret
+  labels:
+    {{- include "voice-ai.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  ANTHROPIC_API_KEY: {{ required "secrets.anthropicApiKey is required (or set secrets.create=false and use an existingSecret)" .Values.secrets.anthropicApiKey | quote }}
+  # Verification-gate secrets. Empty -> agent logs codes (dev mode).
+  SMTP_PASSWORD: {{ .Values.verification.smtp.password | quote }}
+  TWILIO_AUTH_TOKEN: {{ .Values.verification.twilio.authToken | quote }}
+  # Admin console token. Empty -> agent uses a dev default (+ warning).
+  ADMIN_TOKEN: {{ .Values.secrets.adminToken | quote }}
+  # Optional non-Anthropic LLM keys (only the provider you use needs one).
+  OPENAI_API_KEY: {{ .Values.secrets.openaiApiKey | quote }}
+  GEMINI_API_KEY: {{ .Values.secrets.geminiApiKey | quote }}
+{{- end }}
